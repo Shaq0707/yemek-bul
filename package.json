@@ -1,0 +1,7 @@
+{
+  "name": "yemek-bul",
+  "version": "1.0.0",
+  "private": true,
+  "description": "UK yemek bulucu: Google Maps verisiyle ucuzdan pahalıya, sağlıklıdan az sağlıklıya sıralama",
+  "engines": { "node": ">=18" }
+}
