@@ -1,62 +1,79 @@
-// Vercel serverless: Google Geocoding + Places API (New) proxy.
-// Env: GOOGLE_MAPS_API_KEY (Geocoding API + Places API (New) etkin olmalı)
-const FIELDS = [
-  'places.id', 'places.displayName', 'places.formattedAddress', 'places.location',
-  'places.rating', 'places.userRatingCount', 'places.priceLevel', 'places.priceRange',
-  'places.primaryType', 'places.primaryTypeDisplayName', 'places.types',
-  'places.googleMapsUri', 'places.currentOpeningHours.openNow', 'places.editorialSummary'
-].join(',');
+// Vercel serverless: OpenStreetMap (Nominatim + Overpass). API anahtarı gerekmez.
+const UA = 'yemek-bul-uk/1.0 (https://yemek-bul.vercel.app)';
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 
-const TYPE_GROUPS = [
-  ['restaurant', 'meal_takeaway', 'meal_delivery', 'vegan_restaurant', 'vegetarian_restaurant'],
-  ['cafe', 'fast_food_restaurant', 'bakery', 'sandwich_shop', 'pizza_restaurant', 'coffee_shop']
-];
-
-async function geocode(address, key) {
-  const url = 'https://maps.googleapis.com/maps/api/geocode/json?region=gb&components=country:GB&address=' +
-    encodeURIComponent(address) + '&key=' + key;
-  const r = await fetch(url);
+async function geocode(address) {
+  const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=gb&q=' + encodeURIComponent(address);
+  const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'en' } });
   const j = await r.json();
-  if (j.status !== 'OK' || !j.results[0]) throw new Error('Adres bulunamadı (UK): ' + (j.status || ''));
-  const g = j.results[0];
-  return { lat: g.geometry.location.lat, lng: g.geometry.location.lng, label: g.formatted_address };
+  if (!Array.isArray(j) || !j[0]) throw new Error('Adres bulunamadı (UK).');
+  return { lat: parseFloat(j[0].lat), lng: parseFloat(j[0].lon), label: j[0].display_name };
 }
 
-async function nearby(types, lat, lng, radius, key) {
-  const r = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': FIELDS },
-    body: JSON.stringify({
-      includedTypes: types,
-      maxResultCount: 20,
-      rankPreference: 'DISTANCE',
-      languageCode: 'en',
-      regionCode: 'GB',
-      locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius } }
-    })
-  });
-  const j = await r.json();
-  if (!r.ok) throw new Error((j.error && j.error.message) || 'Places API hatası');
-  return j.places || [];
+async function overpass(query) {
+  let err;
+  for (const ep of OVERPASS) {
+    try {
+      const r = await fetch(ep, {
+        method: 'POST',
+        headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query)
+      });
+      if (!r.ok) throw new Error('Overpass ' + r.status);
+      return (await r.json()).elements || [];
+    } catch (e) { err = e; }
+  }
+  throw err;
+}
+
+// OSM'de fiyat verisi yok: mekân türü/mutfaktan tahmini seviye (1=£ ... 3=£££)
+const CHEAP = ['fast_food', 'kebab', 'pizza', 'burger', 'chicken', 'fish_and_chips', 'chip_shop', 'sandwich', 'coffee_shop', 'ice_cream', 'bakery', 'cafe', 'noodle', 'wings', 'donut'];
+const PRICEY = ['french', 'steak_house', 'steak', 'fine_dining', 'sushi', 'japanese', 'seafood', 'tapas'];
+const CHAINS = ['mcdonald', 'kfc', 'burger king', 'subway', 'greggs', 'domino', 'papa john', 'pret', 'costa', 'starbucks', 'nando', 'five guys', 'popeyes', 'wimpy', 'wetherspoon'];
+function priceEst(tags) {
+  const name = (tags.name || '').toLowerCase();
+  const keys = [tags.amenity, ...(tags.cuisine || '').split(/[;,]/)].map(s => s.trim().toLowerCase());
+  if (CHAINS.some(c => name.includes(c))) return 1;
+  if (keys.some(k => PRICEY.includes(k))) return 3;
+  if (keys.some(k => CHEAP.includes(k))) return 1;
+  return 2;
 }
 
 module.exports = async (req, res) => {
-  const key = process.env.GOOGLE_MAPS_API_KEY;
-  if (!key) return res.status(500).json({ error: 'GOOGLE_MAPS_API_KEY tanımlı değil (Vercel > Settings > Environment Variables).' });
   try {
     const q = req.query || {};
     let lat = parseFloat(q.lat), lng = parseFloat(q.lng), label = null;
     if (q.address) {
-      const g = await geocode(String(q.address).slice(0, 200), key);
+      const g = await geocode(String(q.address).slice(0, 200));
       lat = g.lat; lng = g.lng; label = g.label;
     }
     if (!isFinite(lat) || !isFinite(lng)) return res.status(400).json({ error: 'Konum veya adres gerekli.' });
     const radius = Math.min(Math.max(parseInt(q.radius) || 1000, 200), 5000);
-    const groups = await Promise.all(TYPE_GROUPS.map(t => nearby(t, lat, lng, radius, key)));
-    const seen = new Map();
-    groups.flat().forEach(p => seen.set(p.id, p));
+    const query = `[out:json][timeout:20];(nwr["amenity"~"^(restaurant|cafe|fast_food|food_court)$"]["name"](around:${radius},${lat},${lng}););out center tags 150;`;
+    const els = await overpass(query);
+    const places = els.map(e => {
+      const t = e.tags || {};
+      const la = e.lat ?? (e.center && e.center.lat), lo = e.lon ?? (e.center && e.center.lon);
+      if (la == null || lo == null) return null;
+      const cuisines = (t.cuisine || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
+      const types = [t.amenity, ...cuisines];
+      if (t['diet:vegan'] === 'yes' || t['diet:vegan'] === 'only') types.push('vegan');
+      if (t['diet:vegetarian'] === 'yes' || t['diet:vegetarian'] === 'only') types.push('vegetarian');
+      const addr = [t['addr:housenumber'], t['addr:street'], t['addr:postcode']].filter(Boolean).join(' ');
+      return {
+        id: e.type + e.id,
+        displayName: { text: t.name },
+        formattedAddress: addr,
+        location: { latitude: la, longitude: lo },
+        primaryType: t.amenity,
+        primaryTypeDisplayName: { text: (cuisines[0] || t.amenity || '').replace(/_/g, ' ') },
+        types,
+        priceEst: priceEst(t),
+        mapsUri: `https://www.google.com/maps/search/?api=1&query=${la},${lo}`
+      };
+    }).filter(Boolean);
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=600');
-    res.status(200).json({ center: { lat, lng, label }, places: [...seen.values()] });
+    res.status(200).json({ center: { lat, lng, label }, places });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

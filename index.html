@@ -39,7 +39,7 @@ footer{max-width:760px;margin:auto;padding:0 16px 30px;color:var(--mut);font-siz
 <body>
 <header>
   <h1>🍽️ Yemek Bul UK</h1>
-  <p>Google Maps verisiyle yakındaki yerleri fiyata ve sağlık puanına göre sırala.</p>
+  <p>OpenStreetMap verisiyle yakındaki yerleri fiyata ve sağlık puanına göre sırala.</p>
 </header>
 <main>
   <div class="panel">
@@ -53,13 +53,10 @@ footer{max-width:760px;margin:auto;padding:0 16px 30px;color:var(--mut);font-siz
         <select id="radius"><option value="500">500 m</option><option value="1000" selected>1 km</option><option value="2000">2 km</option><option value="5000">5 km</option></select>
       </label>
       <label>Fiyat
-        <select id="fPrice"><option value="">Hepsi</option><option value="1">£</option><option value="2">££</option><option value="3">£££</option><option value="4">££££</option></select>
+        <select id="fPrice"><option value="">Hepsi</option><option value="1">£</option><option value="2">££</option><option value="3">£££</option></select>
       </label>
       <label>Sağlık
         <select id="fHealth"><option value="">Hepsi</option><option value="good">Sağlıklı</option><option value="mid">Orta</option><option value="bad">Az sağlıklı</option></select>
-      </label>
-      <label>Açık mı
-        <select id="fOpen"><option value="">Hepsi</option><option value="1">Sadece açık</option></select>
       </label>
     </div>
     <div class="sorts" id="sorts">
@@ -68,13 +65,12 @@ footer{max-width:760px;margin:auto;padding:0 16px 30px;color:var(--mut);font-siz
       <span class="chip" data-s="healthDesc">🥗 Sağlıklıdan aza</span>
       <span class="chip" data-s="healthAsc">🍔 Az sağlıklıdan çoka</span>
       <span class="chip" data-s="dist">📏 Yakınlık</span>
-      <span class="chip" data-s="rating">⭐ Puan</span>
     </div>
   </div>
   <div id="status">Adres yaz veya konumunu kullan.</div>
   <div id="list"></div>
 </main>
-<footer>Fiyat Google'ın fiyat seviyesinden (£–££££), sağlık puanı mekân türü ve ismine dayalı tahmindir; kesin beslenme bilgisi değildir. Veri: Google Maps.</footer>
+<footer>Fiyat (~£) ve sağlık puanı mekân türü, mutfak ve ismine dayalı tahmindir; gerçek menü fiyatı veya beslenme bilgisi değildir. Veri: © OpenStreetMap katkıcıları.</footer>
 <script>
 const $ = s => document.querySelector(s);
 let places = [], center = null, sortKey = 'priceAsc';
@@ -97,17 +93,7 @@ function healthScore(p){
 }
 const healthLabel = s => s>=65?['Sağlıklı','h-good','good']:s>=40?['Orta','h-mid','mid']:['Az sağlıklı','h-bad','bad'];
 
-const PL = {PRICE_LEVEL_FREE:0,PRICE_LEVEL_INEXPENSIVE:1,PRICE_LEVEL_MODERATE:2,PRICE_LEVEL_EXPENSIVE:3,PRICE_LEVEL_VERY_EXPENSIVE:4};
-function priceInfo(p){
-  const lvl = PL[p.priceLevel];
-  const r = p.priceRange;
-  let text = null, num = null;
-  if(r && r.startPrice){
-    const a = Number(r.startPrice.units||0), b = r.endPrice ? Number(r.endPrice.units||0) : null;
-    text = '£'+a+(b?'–£'+b:'+'); num = b?(a+b)/2:a;
-  }
-  return { lvl: lvl==null?null:lvl, text, num };
-}
+function priceInfo(p){ const l=p.priceEst; return { lvl:l, text:'~'+'£'.repeat(l), num:null }; }
 function dist(a,b,c,d){const R=6371000,t=x=>x*Math.PI/180,dL=t(c-a),dO=t(d-b);const h=Math.sin(dL/2)**2+Math.cos(t(a))*Math.cos(t(c))*Math.sin(dO/2)**2;return Math.round(2*R*Math.asin(Math.sqrt(h)));}
 
 function enrich(){
@@ -118,28 +104,26 @@ function enrich(){
   });
 }
 function render(){
-  const fp=$('#fPrice').value, fh=$('#fHealth').value, fo=$('#fOpen').value;
+  const fp=$('#fPrice').value, fh=$('#fHealth').value;
   let arr = places.filter(p=>{
     if(fp && p._p.lvl!==Number(fp)) return false;
     if(fh && healthLabel(p._h)[2]!==fh) return false;
-    if(fo && !(p.currentOpeningHours && p.currentOpeningHours.openNow)) return false;
     return true;
   });
-  const pv = p => p._p.num!=null ? p._p.num : (p._p.lvl!=null ? [0,8,18,35,60][p._p.lvl] : null);
+  const pv = p => p._p.lvl;
   const cmp = {
     priceAsc:(a,b)=>(pv(a)??1e9)-(pv(b)??1e9),
     priceDesc:(a,b)=>(pv(b)??-1)-(pv(a)??-1),
     healthDesc:(a,b)=>b._h-a._h, healthAsc:(a,b)=>a._h-b._h,
-    dist:(a,b)=>a._d-b._d, rating:(a,b)=>(b.rating||0)-(a.rating||0)
+    dist:(a,b)=>a._d-b._d, _z:0
   }[sortKey];
   arr.sort(cmp);
   $('#list').innerHTML = arr.map(p=>{
     const [hl,hc] = healthLabel(p._h);
-    const price = p._p.text || (p._p.lvl!=null ? '£'.repeat(Math.max(1,p._p.lvl)) : 'Fiyat yok');
-    const open = p.currentOpeningHours ? (p.currentOpeningHours.openNow?'🟢 Açık':'🔴 Kapalı') : '';
+    const price = p._p.text;
     const type = (p.primaryTypeDisplayName&&p.primaryTypeDisplayName.text)||'';
     return `<div class="card"><div class="top"><div><div class="name">${esc(p.displayName.text)}</div><div class="sub">${esc(type)} · ${esc(p.formattedAddress||'')}</div></div><div class="price">${price}</div></div>
-    <div class="tags"><span class="tag ${hc}">${hl} (${p._h})</span><span class="tag">⭐ ${p.rating||'–'} (${p.userRatingCount||0})</span><span class="tag">📏 ${p._d} m</span>${open?`<span class="tag">${open}</span>`:''}<a class="map" href="${p.googleMapsUri}" target="_blank" rel="noopener">Haritada aç →</a></div></div>`;
+    <div class="tags"><span class="tag ${hc}">${hl} (${p._h})</span><span class="tag">📏 ${p._d} m</span><a class="map" href="${p.mapsUri}" target="_blank" rel="noopener">Haritada aç →</a></div></div>`;
   }).join('');
   setStatus(`${arr.length} yer${center&&center.label?' · '+center.label:''}`);
 }
@@ -165,7 +149,7 @@ $('#goLoc').onclick=()=>{
     ()=>setStatus('Konum izni verilmedi, adres yaz.',true),{enableHighAccuracy:true,timeout:10000});
 };
 $('#sorts').onclick=e=>{const c=e.target.closest('.chip');if(!c)return;sortKey=c.dataset.s;document.querySelectorAll('.chip').forEach(x=>x.classList.toggle('on',x===c));if(center)render();};
-['fPrice','fHealth','fOpen'].forEach(id=>$('#'+id).onchange=()=>center&&render());
+['fPrice','fHealth'].forEach(id=>$('#'+id).onchange=()=>center&&render());
 $('#radius').onchange=()=>{ if(center) load({lat:center.lat,lng:center.lng}); };
 </script>
 </body>
