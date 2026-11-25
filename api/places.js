@@ -14,7 +14,7 @@ async function overpass(query) {
   const errs = [];
   const one = ep => fetch(ep, {
     method: 'POST',
-    headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: 'data=' + encodeURIComponent(query),
     signal: AbortSignal.timeout(20000)
   }).then(async r => {
