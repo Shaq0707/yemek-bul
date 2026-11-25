@@ -157,27 +157,55 @@ async function overpass(query){
   catch(e){ throw new Error('Harita sunucularına ulaşılamadı, biraz sonra tekrar dene. ('+errs.join(' | ')+')'); }
 }
 const EPS=()=>OVERPASS;
+function toPlace(t,la,lo,id){
+  const cuis=(t.cuisine||'').split(/[;,]/).map(x=>x.trim()).filter(Boolean);
+  const types=[t.amenity].concat(cuis);
+  if(t['diet:vegan']==='yes'||t['diet:vegan']==='only') types.push('vegan');
+  if(t['diet:vegetarian']==='yes'||t['diet:vegetarian']==='only') types.push('vegetarian');
+  return {id,displayName:{text:t.name},formattedAddress:[t['addr:housenumber'],t['addr:street'],t['addr:postcode']].filter(Boolean).join(' '),
+    location:{latitude:la,longitude:lo},primaryType:t.amenity,primaryTypeDisplayName:{text:(cuis[0]||t.amenity||'').replace(/_/g,' ')},
+    types,priceEst:priceEst(t),mapsUri:`https://www.google.com/maps/search/?api=1&query=${la},${lo}`};
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function viaOverpass(lat,lng,radius){
+  const q=`[out:json][timeout:15];(nw["amenity"~"^(restaurant|cafe|fast_food)$"]["name"](around:${radius},${lat},${lng}););out center tags 150;`;
+  const els=await overpass(q);
+  return els.map(e=>{
+    const la=e.lat!=null?e.lat:(e.center&&e.center.lat), lo=e.lon!=null?e.lon:(e.center&&e.center.lon);
+    return (la==null||lo==null)?null:toPlace(e.tags||{},la,lo,e.type+e.id);
+  }).filter(Boolean);
+}
+async function viaNominatim(lat,lng,radius){
+  const dLat=radius/111320, dLng=radius/(111320*Math.cos(lat*Math.PI/180));
+  const vb=[lng-dLng,lat+dLat,lng+dLng,lat-dLat].join(',');
+  const seen=new Map(); let lastErr=null;
+  for(const [kind,q] of [['restaurant','restaurant'],['cafe','cafe'],['fast_food','fast food takeaway']]){
+    try{
+      const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=40&bounded=1&extratags=1&addressdetails=1&namedetails=1&countrycodes=gb&viewbox='+vb+'&q='+encodeURIComponent(q));
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      (await r.json()).forEach(x=>{
+        if(!['restaurant','cafe','fast_food','food_court'].includes(x.type)) return;
+        const ex=x.extratags||{}, ad=x.address||{};
+        const name=x.name||(x.namedetails&&x.namedetails.name); if(!name) return;
+        const t=Object.assign({},ex,{name,amenity:x.type,'addr:housenumber':ad.house_number,'addr:street':ad.road,'addr:postcode':ad.postcode});
+        seen.set(x.osm_type+x.osm_id,toPlace(t,parseFloat(x.lat),parseFloat(x.lon),x.osm_type+x.osm_id));
+      });
+    }catch(e){ lastErr=e; }
+    await sleep(1100);
+  }
+  if(!seen.size && lastErr) throw lastErr;
+  return [...seen.values()];
+}
 async function load(params){
   setStatus('Aranıyor…');$('#list').innerHTML='';
   try{
     let {lat,lng}=params, label=null;
     if(params.address){ const g=await geocode(params.address); lat=g.lat; lng=g.lng; label=g.label; }
     const radius=parseInt($('#radius').value)||1000;
-    const q=`[out:json][timeout:15];(nw["amenity"~"^(restaurant|cafe|fast_food)$"]["name"](around:${radius},${lat},${lng}););out center tags 150;`;
-    const els=await overpass(q);
-    places=els.map(e=>{
-      const t=e.tags||{}, la=e.lat!=null?e.lat:(e.center&&e.center.lat), lo=e.lon!=null?e.lon:(e.center&&e.center.lon);
-      if(la==null||lo==null) return null;
-      const cuis=(t.cuisine||'').split(/[;,]/).map(x=>x.trim()).filter(Boolean);
-      const types=[t.amenity].concat(cuis);
-      if(t['diet:vegan']==='yes'||t['diet:vegan']==='only') types.push('vegan');
-      if(t['diet:vegetarian']==='yes'||t['diet:vegetarian']==='only') types.push('vegetarian');
-      return {id:e.type+e.id,displayName:{text:t.name},formattedAddress:[t['addr:housenumber'],t['addr:street'],t['addr:postcode']].filter(Boolean).join(' '),
-        location:{latitude:la,longitude:lo},primaryType:t.amenity,primaryTypeDisplayName:{text:(cuis[0]||t.amenity||'').replace(/_/g,' ')},
-        types,priceEst:priceEst(t),mapsUri:`https://www.google.com/maps/search/?api=1&query=${la},${lo}`};
-    }).filter(Boolean);
+    try{ places=await viaOverpass(lat,lng,radius); }
+    catch(e1){ setStatus('Ana sunucu yanıt vermedi, yedek kaynak deneniyor…'); places=await viaNominatim(lat,lng,radius); }
     center={lat,lng,label}; enrich(); render();
-  }catch(e){ setStatus(e.message,true); }
+  }catch(e){ setStatus('Harita verisine ulaşılamadı: '+e.message,true); }
 }
 $('#goAddr').onclick=()=>{const a=$('#addr').value.trim(); if(a) load({address:a});};
 $('#addr').addEventListener('keydown',e=>{if(e.key==='Enter')$('#goAddr').click();});
