@@ -150,7 +150,7 @@ async function geocode(address){
 }
 async function overpass(query){
   const errs=[];
-  const one=ep=>fetch(ep,{method:'POST',body:'data='+encodeURIComponent(query),signal:AbortSignal.timeout(20000)})
+  const one=ep=>fetch(ep,{method:'POST',body:'data='+encodeURIComponent(query),signal:AbortSignal.timeout(7000)})
     .then(async r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return (await r.json()).elements||[]; })
     .catch(e=>{errs.push(ep.split('/')[2]+': '+e.message); throw e;});
   try{ return await Promise.any(EPS().map(one)); }
@@ -179,7 +179,7 @@ async function viaNominatim(lat,lng,radius){
   const dLat=radius/111320, dLng=radius/(111320*Math.cos(lat*Math.PI/180));
   const vb=[lng-dLng,lat+dLat,lng+dLng,lat-dLat].join(',');
   const seen=new Map(); let lastErr=null;
-  for(const [kind,q] of [['restaurant','restaurant'],['cafe','cafe'],['fast_food','fast food takeaway']]){
+  for(const [kind,q] of [['a','restaurant'],['b','cafe'],['c','fast food'],['d','takeaway'],['e','pizza'],['f','kebab'],['g','indian'],['h','chinese'],['i','burger'],['j','chicken'],['k','fish and chips'],['l','sandwich']]){
     try{
       const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=40&bounded=1&extratags=1&addressdetails=1&namedetails=1&countrycodes=gb&viewbox='+vb+'&q='+encodeURIComponent(q));
       if(!r.ok) throw new Error('HTTP '+r.status);
@@ -191,7 +191,7 @@ async function viaNominatim(lat,lng,radius){
         seen.set(x.osm_type+x.osm_id,toPlace(t,parseFloat(x.lat),parseFloat(x.lon),x.osm_type+x.osm_id));
       });
     }catch(e){ lastErr=e; }
-    await sleep(1100);
+    await sleep(1050);
   }
   if(!seen.size && lastErr) throw lastErr;
   return [...seen.values()];
