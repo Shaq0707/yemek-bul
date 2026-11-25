@@ -1,10 +1,10 @@
 // Vercel serverless: OpenStreetMap (Nominatim + Overpass). API anahtarı gerekmez.
 const UA = 'yemek-bul-uk/1.0 (https://yemek-bul.vercel.app)';
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
 
 async function geocode(address) {
   const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=gb&q=' + encodeURIComponent(address);
-  const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'en' } });
+  const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'en' }, signal: AbortSignal.timeout(8000) });
   const j = await r.json();
   if (!Array.isArray(j) || !j[0]) throw new Error('Adres bulunamadı (UK).');
   return { lat: parseFloat(j[0].lat), lng: parseFloat(j[0].lon), label: j[0].display_name };
@@ -17,7 +17,8 @@ async function overpass(query) {
       const r = await fetch(ep, {
         method: 'POST',
         headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query)
+        body: 'data=' + encodeURIComponent(query),
+        signal: AbortSignal.timeout(11000)
       });
       if (!r.ok) throw new Error('Overpass ' + r.status);
       return (await r.json()).elements || [];
@@ -49,7 +50,7 @@ module.exports = async (req, res) => {
     }
     if (!isFinite(lat) || !isFinite(lng)) return res.status(400).json({ error: 'Konum veya adres gerekli.' });
     const radius = Math.min(Math.max(parseInt(q.radius) || 1000, 200), 5000);
-    const query = `[out:json][timeout:20];(nwr["amenity"~"^(restaurant|cafe|fast_food|food_court)$"]["name"](around:${radius},${lat},${lng}););out center tags 150;`;
+    const query = `[out:json][timeout:10];(nwr["amenity"~"^(restaurant|cafe|fast_food|food_court)$"]["name"](around:${radius},${lat},${lng}););out center tags 120;`;
     const els = await overpass(query);
     const places = els.map(e => {
       const t = e.tags || {};
