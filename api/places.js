@@ -1,5 +1,5 @@
 // Vercel serverless: OpenStreetMap (Nominatim + Overpass). API anahtarı gerekmez.
-const UA = 'yemek-bul-uk/1.0 (https://yemek-bul.vercel.app)';
+const UA = 'Mozilla/5.0 (compatible; yemek-bul/1.0; +https://yemek-bul.vercel.app)';
 const OVERPASS = ['https://overpass.private.coffee/api/interpreter', 'https://overpass.osm.jp/api/interpreter', 'https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
 
 async function geocode(address) {
@@ -14,7 +14,7 @@ async function overpass(query) {
   const errs = [];
   const one = ep => fetch(ep, {
     method: 'POST',
-    headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'User-Agent': UA, 'Referer': 'https://yemek-bul.vercel.app/', 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
     body: 'data=' + encodeURIComponent(query),
     signal: AbortSignal.timeout(20000)
   }).then(async r => {
@@ -49,7 +49,7 @@ module.exports = async (req, res) => {
     }
     if (!isFinite(lat) || !isFinite(lng)) return res.status(400).json({ error: 'Konum veya adres gerekli.' });
     const radius = Math.min(Math.max(parseInt(q.radius) || 1000, 200), 5000);
-    const query = `[out:json][timeout:10];(nwr["amenity"~"^(restaurant|cafe|fast_food|food_court)$"]["name"](around:${radius},${lat},${lng}););out center tags 120;`;
+    const query = `[out:json][timeout:10];(nw["amenity"~"^(restaurant|cafe|fast_food)$"]["name"](around:${radius},${lat},${lng}););out center tags 120;`;
     const els = await overpass(query);
     const places = els.map(e => {
       const t = e.tags || {};
