@@ -130,13 +130,53 @@ function render(){
 const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function setStatus(t,err){const e=$('#status');e.textContent=t;e.className=err?'err':'';}
 
+const OVERPASS = ['https://overpass-api.de/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+const CHEAP_K = ['fast_food','kebab','pizza','burger','chicken','fish_and_chips','chip_shop','sandwich','coffee_shop','ice_cream','bakery','cafe','noodle','wings','donut'];
+const PRICEY_K = ['french','steak_house','steak','fine_dining','sushi','japanese','seafood','tapas'];
+const CHAINS = ['mcdonald','kfc','burger king','subway','greggs','domino','papa john','pret','costa','starbucks','nando','five guys','popeyes','wimpy','wetherspoon'];
+function priceEst(t){
+  const name=(t.name||'').toLowerCase();
+  const keys=[t.amenity].concat((t.cuisine||'').split(/[;,]/)).map(x=>x.trim().toLowerCase());
+  if(CHAINS.some(c=>name.includes(c))) return 1;
+  if(keys.some(k=>PRICEY_K.includes(k))) return 3;
+  if(keys.some(k=>CHEAP_K.includes(k))) return 1;
+  return 2;
+}
+async function geocode(address){
+  const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=gb&q='+encodeURIComponent(address));
+  const j=await r.json();
+  if(!j[0]) throw new Error('Adres bulunamadı (UK).');
+  return {lat:parseFloat(j[0].lat),lng:parseFloat(j[0].lon),label:j[0].display_name};
+}
+async function overpass(query){
+  const errs=[];
+  const one=ep=>fetch(ep,{method:'POST',body:'data='+encodeURIComponent(query),signal:AbortSignal.timeout(20000)})
+    .then(async r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return (await r.json()).elements||[]; })
+    .catch(e=>{errs.push(ep.split('/')[2]+': '+e.message); throw e;});
+  try{ return await Promise.any(EPS().map(one)); }
+  catch(e){ throw new Error('Harita sunucularına ulaşılamadı, biraz sonra tekrar dene. ('+errs.join(' | ')+')'); }
+}
+const EPS=()=>OVERPASS;
 async function load(params){
   setStatus('Aranıyor…');$('#list').innerHTML='';
   try{
-    const q = new URLSearchParams({...params, radius:$('#radius').value});
-    const r = await fetch('/api/places?'+q); const j = await r.json();
-    if(!r.ok) throw new Error(j.error||'Hata');
-    center = j.center; places = j.places; enrich(); render();
+    let {lat,lng}=params, label=null;
+    if(params.address){ const g=await geocode(params.address); lat=g.lat; lng=g.lng; label=g.label; }
+    const radius=parseInt($('#radius').value)||1000;
+    const q=`[out:json][timeout:15];(nw["amenity"~"^(restaurant|cafe|fast_food)$"]["name"](around:${radius},${lat},${lng}););out center tags 150;`;
+    const els=await overpass(q);
+    places=els.map(e=>{
+      const t=e.tags||{}, la=e.lat!=null?e.lat:(e.center&&e.center.lat), lo=e.lon!=null?e.lon:(e.center&&e.center.lon);
+      if(la==null||lo==null) return null;
+      const cuis=(t.cuisine||'').split(/[;,]/).map(x=>x.trim()).filter(Boolean);
+      const types=[t.amenity].concat(cuis);
+      if(t['diet:vegan']==='yes'||t['diet:vegan']==='only') types.push('vegan');
+      if(t['diet:vegetarian']==='yes'||t['diet:vegetarian']==='only') types.push('vegetarian');
+      return {id:e.type+e.id,displayName:{text:t.name},formattedAddress:[t['addr:housenumber'],t['addr:street'],t['addr:postcode']].filter(Boolean).join(' '),
+        location:{latitude:la,longitude:lo},primaryType:t.amenity,primaryTypeDisplayName:{text:(cuis[0]||t.amenity||'').replace(/_/g,' ')},
+        types,priceEst:priceEst(t),mapsUri:`https://www.google.com/maps/search/?api=1&query=${la},${lo}`};
+    }).filter(Boolean);
+    center={lat,lng,label}; enrich(); render();
   }catch(e){ setStatus(e.message,true); }
 }
 $('#goAddr').onclick=()=>{const a=$('#addr').value.trim(); if(a) load({address:a});};
