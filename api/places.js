@@ -1,6 +1,6 @@
 // Vercel serverless: OpenStreetMap (Nominatim + Overpass). API anahtarı gerekmez.
 const UA = 'yemek-bul-uk/1.0 (https://yemek-bul.vercel.app)';
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+const OVERPASS = ['https://overpass.private.coffee/api/interpreter', 'https://overpass.osm.jp/api/interpreter', 'https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
 
 async function geocode(address) {
   const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=gb&q=' + encodeURIComponent(address);
@@ -11,20 +11,19 @@ async function geocode(address) {
 }
 
 async function overpass(query) {
-  let err;
-  for (const ep of OVERPASS) {
-    try {
-      const r = await fetch(ep, {
-        method: 'POST',
-        headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query),
-        signal: AbortSignal.timeout(11000)
-      });
-      if (!r.ok) throw new Error('Overpass ' + r.status);
-      return (await r.json()).elements || [];
-    } catch (e) { err = e; }
-  }
-  throw err;
+  const errs = [];
+  const one = ep => fetch(ep, {
+    method: 'POST',
+    headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: 'data=' + encodeURIComponent(query),
+    signal: AbortSignal.timeout(20000)
+  }).then(async r => {
+    if (!r.ok) throw new Error(ep.split('/')[2] + ' HTTP ' + r.status);
+    const j = await r.json();
+    return j.elements || [];
+  }).catch(e => { errs.push(ep.split('/')[2] + ': ' + e.message); throw e; });
+  try { return await Promise.any(OVERPASS.map(one)); }
+  catch (e) { throw new Error('Overpass ulaşılamadı → ' + errs.join(' | ')); }
 }
 
 // OSM'de fiyat verisi yok: mekân türü/mutfaktan tahmini seviye (1=£ ... 3=£££)
